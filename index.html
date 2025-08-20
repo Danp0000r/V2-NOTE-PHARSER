@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lesson Parser & XML Converter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for the 3D flashcard flip effect */
+        .flashcard {
+            perspective: 1000px; /* Gives the 3D effect */
+        }
+        .flashcard-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            transition: transform 0.6s;
+            transform-style: preserve-3d;
+        }
+        .flashcard.is-flipped .flashcard-inner {
+            transform: rotateY(180deg);
+        }
+        .flashcard-front,
+        .flashcard-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            -webkit-backface-visibility: hidden; /* For Safari */
+            backface-visibility: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 1rem;
+            border-radius: 0.5rem;
+        }
+        .flashcard-back {
+            transform: rotateY(180deg);
+        }
+        /* Custom styling for the buttons to add more visual flair */
+        .button-primary {
+            background-image: linear-gradient(to right, #2563eb, #3b82f6);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .button-primary:hover {
+            background-image: linear-gradient(to right, #1d4ed8, #2563eb);
+            transform: scale(1.05);
+        }
+        .button-secondary {
+            background-image: linear-gradient(to right, #10b981, #34d399);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .button-secondary:hover {
+            background-image: linear-gradient(to right, #059669, #10b981);
+            transform: scale(1.05);
+        }
+        .button-tertiary {
+            background-image: linear-gradient(to right, #f59e0b, #fbbf24);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .button-tertiary:hover {
+            background-image: linear-gradient(to right, #d97706, #f59e0b);
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans antialiased">
+
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8 max-w-4xl">
+        <div class="bg-white p-4 sm:p-8 rounded-lg shadow-lg mb-6">
+
+            <!-- Step 1: Notes Input -->
+            <div id="step1-notes" class="workflow-step">
+                <h1 class="text-3xl font-bold text-gray-800 mb-2">Step 1: Paste Your Notes</h1>
+                <p class="text-gray-600 mb-6">Paste your raw notes below. I'll analyze the content, clean it up, and format it into a structured XML document for you.</p>
+                <textarea id="notesInput" class="w-full h-64 p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out font-mono text-sm" placeholder="Paste your notes here..."></textarea>
+                <button id="generateXmlButton" class="mt-4 w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white button-primary transition-transform transform hover:scale-105">
+                    Generate XML
+                </button>
+                <div id="loadingIndicator" class="hidden mt-4 text-gray-500">Processing... this may take a moment.</div>
+                <div id="messageArea" class="mt-4"></div>
+            </div>
+
+            <!-- Step 2: XML Review -->
+            <div id="step2-xml" class="workflow-step hidden">
+                <h1 class="text-3xl font-bold text-gray-800 mb-2">Step 2: Review & Edit XML</h1>
+                <p class="text-gray-600 mb-6">Here is the generated XML. You can make manual adjustments below. When you're ready, click "Parse Lesson" to see the final output.</p>
+                <textarea id="editableXmlOutput" class="w-full h-64 p-4 border border-gray-300 rounded-lg bg-gray-50 text-gray-800 focus:outline-none font-mono text-sm"></textarea>
+                <div class="mt-4 flex flex-wrap gap-2">
+                     <button onclick="parseLesson()" class="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white button-primary transition-transform transform hover:scale-105">
+                        Parse Lesson
+                    </button>
+                    <button onclick="showStep(1)" class="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-gray-700 bg-gray-200 hover:bg-gray-300 transition-transform transform hover:scale-105">
+                        Back to Notes
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Step 3: Final Lesson Output -->
+        <div id="lesson-output" class="workflow-step hidden">
+             <div class="flex justify-between items-center mb-4">
+                <h1 class="text-3xl font-bold text-gray-800">Your Formatted Lesson</h1>
+                <button onclick="startOver()" class="px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white button-primary transition-transform transform hover:scale-105">
+                    Start Over
+                </button>
+            </div>
+            <div id="output-container"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- Workflow Management ---
+
+        /**
+         * Controls which step of the workflow is visible to the user.
+         * @param {number} stepNumber The step to display (1, 2, or 3).
+         */
+        function showStep(stepNumber) {
+            document.getElementById('step1-notes').classList.toggle('hidden', stepNumber !== 1);
+            document.getElementById('step2-xml').classList.toggle('hidden', stepNumber !== 2);
+            document.getElementById('lesson-output').classList.toggle('hidden', stepNumber !== 3);
+            
+            // Clear any previous messages when switching steps
+            if (stepNumber === 1) {
+                document.getElementById('messageArea').innerHTML = '';
+            }
+        }
+
+        /**
+         * Resets the entire application to its initial state.
+         */
+        function startOver() {
+            document.getElementById('notesInput').value = '';
+            document.getElementById('editableXmlOutput').value = '';
+            document.getElementById('output-container').innerHTML = '';
+            showStep(1);
+        }
+
+
+        // --- Core Application Logic (Mostly Unchanged) ---
+
+        /**
+         * Formats raw text content by replacing newlines with <br> tags
+         * and content wrapped in %...% with <strong> tags.
+         * @param {string} text The raw text content.
+         * @param {boolean} isSolution Optional. True if the text is a solution.
+         * @returns {string} The formatted HTML string.
+         */
+        function formatContent(text, isSolution = false) {
+            let formattedText = text.trim();
+            if (!isSolution) {
+                formattedText = formattedText.replace(/\s+/g, ' ');
+            }
+            formattedText = formattedText.replace(/\n/g, '<br>');
+            formattedText = formattedText.replace(/(%)([^%]+)(%)/g, '<strong>$2</strong>');
+            return formattedText;
+        }
+
+        /**
+         * Creates a styled heading for sections.
+         * @param {string} text The text content for the heading.
+         * @returns {HTMLElement} The created heading element.
+         */
+        const createSectionHeading = (text) => {
+            const heading = document.createElement("h2");
+            heading.className = "text-2xl font-semibold text-gray-800 mb-2 sm:mb-0";
+            heading.textContent = text;
+            return heading;
+        };
+        
+        /**
+         * Shuffles an array in place.
+         * @param {Array} array The array to shuffle.
+         */
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[i], array[j]];
+            }
+        }
+
+        /**
+         * Creates and appends flashcard elements to a container.
+         * @param {Array} itemsArray The array of item nodes.
+         * @param {HTMLElement} container The container to append the flashcards to.
+         */
+        function createFlashcards(itemsArray, container) {
+            container.innerHTML = '';
+            itemsArray.forEach(itemNode => {
+                const parts = itemNode.textContent.split(':');
+                const term = parts[0].trim();
+                const definition = parts.slice(1).join(':').trim();
+
+                const flashcard = document.createElement('div');
+                flashcard.className = 'flashcard bg-transparent rounded-lg h-48 cursor-pointer';
+                flashcard.innerHTML = `
+                    <div class="flashcard-inner">
+                        <div class="flashcard-front rounded-lg shadow-md border border-gray-200 bg-white p-4">
+                            <h4 class="text-xl font-bold text-gray-800">${formatContent(term)}</h4>
+                        </div>
+                        <div class="flashcard-back rounded-lg shadow-md border border-blue-200 bg-blue-100 p-4">
+                            <p class="text-gray-700">${formatContent(definition)}</p>
+                        </div>
+                    </div>
+                `;
+                flashcard.addEventListener('click', () => flashcard.classList.toggle('is-flipped'));
+                container.appendChild(flashcard);
+            });
+        }
+
+        /**
+         * Parses the XML from the editable textarea and renders the lesson.
+         */
+        function parseLesson() {
+            // MODIFICATION: Read from the new editable XML output area
+            const input = document.getElementById('editableXmlOutput').value;
+            const outputDiv = document.getElementById("output-container");
+            outputDiv.innerHTML = "";
+
+            if (!input.trim()) {
+                outputDiv.innerHTML = `<div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-lg shadow-md" role="alert"><p>The XML input is empty.</p></div>`;
+                showStep(3); // Show the output area even for the error message
+                return;
+            }
+
+            const wrappedInput = `<root>${input.trim()}</root>`;
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(wrappedInput, "text/xml");
+
+            if (xmlDoc.getElementsByTagName("parsererror").length) {
+                outputDiv.innerHTML = `<div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded-lg shadow-md" role="alert"><p class="font-bold">Parsing Error</p><p>The XML is not well-formed. Please correct it and try again.</p></div>`;
+                showStep(3);
+                return;
+            }
+
+            const allLessons = xmlDoc.getElementsByTagName("lesson");
+
+            if (allLessons.length === 0) {
+                 outputDiv.innerHTML = `<div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-lg shadow-md" role="alert"><p>No &lt;lesson&gt; tags were found.</p></div>`;
+                 showStep(3);
+                 return;
+            }
+
+            // The rest of the parsing logic is identical to the original function
+            Array.from(allLessons).forEach(lessonNode => {
+                const lessonContainerDiv = document.createElement("div");
+                lessonContainerDiv.className = "bg-white p-8 rounded-lg shadow-lg mb-8";
+                outputDiv.appendChild(lessonContainerDiv);
+
+                let currentSubtopicDiv = null;
+
+                Array.from(lessonNode.children).forEach(node => {
+                    const tagName = node.tagName.toLowerCase();
+
+                    if (tagName === "subtopic") {
+                        if (currentSubtopicDiv) lessonContainerDiv.appendChild(currentSubtopicDiv);
+                        currentSubtopicDiv = document.createElement('div');
+                        currentSubtopicDiv.className = 'mt-8 p-6 bg-gray-50 rounded-lg shadow-sm border border-gray-200';
+                        const h3 = document.createElement('h3');
+                        h3.className = 'text-2xl font-semibold text-gray-700 mb-2';
+                        h3.textContent = node.textContent;
+                        currentSubtopicDiv.appendChild(h3);
+                    } else if (tagName === "description") {
+                        const p = document.createElement('p');
+                        p.className = 'text-gray-700 text-base leading-relaxed mb-4';
+                        p.innerHTML = formatContent(node.textContent);
+                        (currentSubtopicDiv || lessonContainerDiv).appendChild(p);
+                    } else if (tagName === "items") {
+                        const itemsListContainer = document.createElement('div');
+                        itemsListContainer.className = 'mt-4 mb-6';
+                        const itemsList = document.createElement('ul');
+                        itemsList.className = 'list-none p-0 m-0 space-y-3';
+                        const allItems = Array.from(node.getElementsByTagName("item"));
+                        allItems.forEach(itemNode => {
+                            const li = document.createElement('li');
+                            li.className = 'bg-blue-50 p-3 rounded-md border border-blue-100 shadow-sm flex items-start';
+                            li.innerHTML = `<span class="text-blue-500 mr-2 text-lg leading-none">&bull;</span><span class="flex-1">${formatContent(itemNode.textContent)}</span>`;
+                            itemsList.appendChild(li);
+                        });
+                        itemsListContainer.appendChild(itemsList);
+                        (currentSubtopicDiv || lessonContainerDiv).appendChild(itemsListContainer);
+
+                        const isFlashcardable = allItems.length > 0 && allItems.every(item => item.textContent.includes(':'));
+                        if (isFlashcardable && currentSubtopicDiv) {
+                            const flashcardsContainer = document.createElement('div');
+                            flashcardsContainer.className = 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 hidden';
+                            currentSubtopicDiv.appendChild(flashcardsContainer);
+
+                            const toggleButton = document.createElement('button');
+                            toggleButton.textContent = '🧠 Create Flashcards';
+                            toggleButton.className = 'px-3 py-1.5 text-sm font-medium text-white button-secondary transition-transform transform hover:scale-105';
+                            
+                            const shuffleButton = document.createElement('button');
+                            shuffleButton.textContent = '🔀 Shuffle Cards';
+                            shuffleButton.className = 'ml-2 px-3 py-1.5 text-sm font-medium text-white button-tertiary transition-transform transform hover:scale-105 hidden';
+
+                            const subtopicHeading = currentSubtopicDiv.querySelector('h3');
+                            if (subtopicHeading) {
+                                const headerWrapper = document.createElement('div');
+                                headerWrapper.className = 'flex justify-between items-center';
+                                subtopicHeading.parentNode.replaceChild(headerWrapper, subtopicHeading);
+                                headerWrapper.appendChild(subtopicHeading);
+                                
+                                const buttonWrapper = document.createElement('div');
+                                buttonWrapper.appendChild(toggleButton);
+                                buttonWrapper.appendChild(shuffleButton);
+                                headerWrapper.appendChild(buttonWrapper);
+
+                                toggleButton.addEventListener('click', () => {
+                                    itemsListContainer.classList.toggle('hidden');
+                                    flashcardsContainer.classList.toggle('hidden');
+                                    toggleButton.textContent = flashcardsContainer.classList.contains('hidden') ? '🧠 Create Flashcards' : '📄 Show as List';
+                                    shuffleButton.classList.toggle('hidden', flashcardsContainer.classList.contains('hidden'));
+                                    if (!flashcardsContainer.classList.contains('hidden')) {
+                                        createFlashcards([...allItems], flashcardsContainer);
+                                    }
+                                });
+                                
+                                shuffleButton.addEventListener('click', () => createFlashcards([...allItems], flashcardsContainer));
+                            }
+                        }
+                    } else if (tagName === "examples") {
+                        if (currentSubtopicDiv) {
+                            currentSubtopicDiv.appendChild(createSectionHeading("Examples"));
+                            const container = document.createElement('div');
+                            container.className = 'space-y-4';
+                            Array.from(node.getElementsByTagName("example")).forEach(ex => {
+                                const block = document.createElement("div");
+                                block.className = "bg-gray-50 p-4 rounded-lg border border-gray-200";
+                                const parts = ex.textContent.split(/Solution:/i);
+                                if (parts.length === 2) {
+                                    block.innerHTML = `<div class="text-gray-800 font-medium mb-2">${formatContent(parts[0].trim().replace(/^Question:/i, '<b>Question:</b>'))}</div><div class="text-gray-600">${formatContent(parts[1].trim(), true)}</div>`;
+                                } else {
+                                    block.innerHTML = `<div class="text-gray-600">${formatContent(ex.textContent.trim())}</div>`;
+                                }
+                                container.appendChild(block);
+                            });
+                            currentSubtopicDiv.appendChild(container);
+                        }
+                    } else if (tagName === "title") {
+                        const h1 = document.createElement('h1');
+                        h1.className = "text-4xl font-extrabold text-gray-900 text-center mb-6";
+                        h1.textContent = node.textContent;
+                        lessonContainerDiv.prepend(h1);
+                    } else if (tagName === "main_topic") {
+                        const h2 = document.createElement('h2');
+                        h2.className = 'text-3xl font-bold text-gray-800 mb-2';
+                        h2.textContent = node.textContent;
+                        lessonContainerDiv.appendChild(h2);
+                    }
+                });
+
+                if (currentSubtopicDiv) lessonContainerDiv.appendChild(currentSubtopicDiv);
+            });
+
+            // MODIFICATION: Show the final output step
+            showStep(3);
+        }
+        
+        /**
+         * Escapes HTML special characters.
+         * @param {string} str The string to escape.
+         * @returns {string} The escaped string.
+         */
+        function escapeHtml(str) {
+            return (str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
+        
+        /**
+         * Converts raw notes into structured XML using the Gemini API.
+         */
+        async function convertNotesToXml() {
+            const notes = document.getElementById('notesInput').value;
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const editableXmlOutput = document.getElementById('editableXmlOutput');
+            const messageDiv = document.getElementById('messageArea');
+
+            messageDiv.innerHTML = '';
+            editableXmlOutput.value = '';
+
+            if (!notes.trim()) {
+                messageDiv.innerHTML = `<div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-lg shadow-md" role="alert"><p>Please paste some notes to convert.</p></div>`;
+                return;
+            }
+
+            loadingIndicator.classList.remove('hidden');
+            
+            // CORRECTED: Removed potentially problematic trailing text from the prompt.
+            const prompt = `Convert the following raw notes into a structured JSON object for lessons. The notes might be messy or conversational. Your task is to extract all lessons, each with their main topic, subtopics, descriptions, items (list-style content), and examples (questions with solutions).
+
+- Structure to follow:
+
+- The root object should be 'lesson'.
+
+- Identify a single or multiple (if applicable) 'title' for each lesson.
+
+- Identify a single or multiple (if applicable) 'mainTopic' and its 'description'.
+
+- Identify all subtopics, each with:
+- 'subtopic' heading
+- 'description'
+- an array of 'items'
+- optionally an array of 'examples'
+
+- If an item is a definition, format it as "Term: Definition".
+
+- If a subtopic has examples, they should be an array of objects, each with:
+- 'question'
+- 'solution'
+
+- For mathematical examples, provide step-by-step solutions, each step separated by a newline character. Example:
+"f(3) = 2(3) + 1\\n= 6 + 1\\n= 7"
+
+- Examples must always be nested under the relevant subtopic; do not place them outside.
+
+- If new lessons or subjects are detected, create a new lesson and include all its subtopics and examples. Example:
+<lesson>...</lesson>
+<lesson>...</lesson>
+
+- IMPORTANT: Read and compare the notes carefully. Ensure all lessons, subtopics, items, and examples are included. Do not truncate. Revise from the start if necessary.
+
+Here are the notes:
+
+${notes}`;
+            
+            try {
+                const chatHistory = [{ role: "user", parts: [{ text: prompt }] }];
+                
+                // CORRECTED: Formatted the 'responseSchema' object for better readability and to avoid potential parsing issues with very long lines.
+                const payload = {
+                    contents: chatHistory,
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: "ARRAY",
+                            items: {
+                                type: "OBJECT",
+                                properties: {
+                                    lesson: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            title: { type: "STRING" },
+                                            mainTopic: { type: "STRING" },
+                                            description: { type: "STRING" },
+                                            subtopics: {
+                                                type: "ARRAY",
+                                                items: {
+                                                    type: "OBJECT",
+                                                    properties: {
+                                                        subtopic: { type: "STRING" },
+                                                        description: { type: "STRING" },
+                                                        items: { type: "ARRAY", items: { type: "STRING" } },
+                                                        examples: {
+                                                            type: "ARRAY",
+                                                            items: {
+                                                                type: "OBJECT",
+                                                                properties: {
+                                                                    question: { type: "STRING" },
+                                                                    solution: { type: "STRING" }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                const apiKey = "AIzaSyB901_4zHrR90CWIS1RdwxxpviIOQWmp4c"; // Updated API Key
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+                
+                const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                if (!response.ok) throw new Error(`API call failed with status: ${response.status}`);
+                
+                const result = await response.json();
+                const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!jsonText) throw new Error('No content received from the API.');
+
+                const data = JSON.parse(jsonText);
+                let xml = '';
+                data.forEach(lessonObject => {
+                    const lesson = lessonObject.lesson;
+                    xml += `<lesson>\n`;
+                    xml += `  <title>${escapeHtml(lesson.title)}</title>\n`;
+                    xml += `  <main_topic>${escapeHtml(lesson.mainTopic)}</main_topic>\n`;
+                    xml += `  <description>\n    ${escapeHtml(lesson.description)}\n  </description>\n\n`;
+                    if (lesson.subtopics) {
+                        lesson.subtopics.forEach(sub => {
+                            xml += `  <subtopic>${escapeHtml(sub.subtopic)}</subtopic>\n`;
+                            xml += `  <description>\n    ${escapeHtml(sub.description)}\n  </description>\n`;
+                            if (sub.items && sub.items.length > 0) {
+                                xml += `  <items>\n`;
+                                sub.items.forEach(item => { xml += `    <item>${escapeHtml(item)}</item>\n`; });
+                                xml += `  </items>\n\n`;
+                            } else { xml += `\n`; }
+                            if (sub.examples && sub.examples.length > 0) {
+                                xml += `  <examples>\n`;
+                                sub.examples.forEach(ex => {
+                                    xml += `    <example>\n      Question: ${escapeHtml(ex.question)}\n      Solution: ${escapeHtml(ex.solution)}\n    </example>\n`;
+                                });
+                                xml += `  </examples>\n`;
+                            }
+                        });
+                    }
+                    xml += `</lesson>\n\n`;
+                });
+
+                editableXmlOutput.value = xml.trim();
+                showStep(2);
+
+            } catch (error) {
+                console.error('Conversion failed:', error);
+                messageDiv.innerHTML = `<div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded-lg shadow-md" role="alert"><p class="font-bold">Conversion Error</p><p>Something went wrong. Please check your notes or try again.</p></div>`;
+            } finally {
+                loadingIndicator.classList.add('hidden');
+            }
+        }
+        
+        // --- Initial Setup ---
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('generateXmlButton').addEventListener('click', convertNotesToXml);
+            showStep(1); // Start at the first step
+        });
+    </script>
+</body>
+</html>
